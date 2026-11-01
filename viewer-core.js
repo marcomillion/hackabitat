@@ -13,7 +13,7 @@ async function scanParadiseSpritePackages(onProgress=()=>{}){
  const data=Hackabitat.firmware?.bytes;if(!data)throw Error('Load firmware first');
  const packages=[],seen=new Set(),hasArc=p=>p+16<=data.length&&data[p]===65&&data[p+1]===82&&data[p+2]===67&&data[p+3]===50;
  // Import of Paradise Advance's ARC2 package-table detection.
- for(let p=0;(p=data.indexOf(65,p))!==-1;){
+ for(let p=-1;(p=data.indexOf(65,p+1))!==-1;){
   if(!hasArc(p))continue;
   const total=readU32(data,p+8),files=readU32(data,p+12);
   if(!files||files>4096||total<files*16||p+16+total>data.length)continue;
@@ -30,7 +30,7 @@ async function scanParadiseSpritePackages(onProgress=()=>{}){
  // Build sorted archive ranges once. The old ranges.some() ran for every 4-byte
  // offset and caused quadratic work on large firmware files.
  const ranges=[];
- for(let p=0;(p=data.indexOf(65,p))!==-1;){
+ for(let p=-1;(p=data.indexOf(65,p+1))!==-1;){
   if(!hasArc(p))continue;
   const total=readU32(data,p+8);
   if(total>0&&total<0x1000000&&p+16+total<=data.length)ranges.push([p,p+16+total]);
