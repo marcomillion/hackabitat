@@ -9,4 +9,58 @@ function decodeParadiseSpriteFrame(pkg,assetIndex,frameIndex,paletteSet=0){const
 function decodeParadiseSubimage(pkg,assetIndex,subimageIndex,paletteSet=0){const all=Hackabitat.firmware.bytes,base=pkg.offset,rel=readU32(all,base+assetIndex*4),start=base+rel,h=parseSpriteHeader(all,start,base+pkg.length);if(!h)throw Error('Invalid sprite header');const cols=Math.max(1,h.imageWidth),rows=Math.max(1,h.imageHeight),per=cols*rows,total=Math.floor(h.count/per),index=Math.max(0,Math.min(total-1,subimageIndex)),w=h.width*cols,ht=h.height*rows,rgba=new Uint8ClampedArray(w*ht*4);for(let ty=0;ty<rows;ty++)for(let tx=0;tx<cols;tx++){const tile=decodeParadiseSpriteFrame(pkg,assetIndex,index*per+ty*cols+tx,paletteSet);for(let y=0;y<h.height;y++){const src=y*h.width*4,dst=((ty*h.height+y)*w+tx*h.width)*4;rgba.set(tile.rgba.subarray(src,src+h.width*4),dst)}}return{width:w,height:ht,rgba,header:h}}
 function rgbaToPixels(d){const pixels=[],palette=[],seen=new Set();for(let i=0;i<d.rgba.length;i+=4){if(!d.rgba[i+3]){pixels.push(null);continue}const c='#'+[d.rgba[i],d.rgba[i+1],d.rgba[i+2]].map(v=>v.toString(16).padStart(2,'0')).join('');pixels.push(c);if(!seen.has(c)&&palette.length<64){seen.add(c);palette.push(c)}}return{pixels,palette:palette.length?palette:['#000000']}}
 function buildParadiseAssetIndex(){const data=Hackabitat.firmware?.bytes;if(!data)return;const assets=[];for(const pkg of paradiseExtract.packages)for(let ai=0;ai<pkg.entryCount;ai++){const rel=readU32(data,pkg.offset+ai*4),h=parseSpriteHeader(data,pkg.offset+rel,pkg.offset+pkg.length);if(!h)continue;const subimages=Math.floor(h.count/(h.imageWidth*h.imageHeight));if(!subimages)continue;const width=h.width*h.imageWidth,height=h.height*h.imageHeight,category=(width>=96&&height>=64)?'backgrounds':(width<=32&&height<=32&&subimages<=4)?'icons':(subimages>=4&&(width>=24||height>=24))?'characters':(width<=48&&height<=48)?'ui':subimages>=2?'effects':'other';assets.push({pkg,assetIndex:ai,header:h,subimages,width,height,category,id:pkg.offset+':'+ai})}paradiseExtract.assets=assets}
-function scanParadiseSpritePackages(){const data=Hackabitat.firmware?.bytes;if(!data)throw Error('Load firmware first');const packages=[],seen=new Set(),hasArc=p=>p+16<=data.length&&data[p]===65&&data[p+1]===82&&data[p+2]===67&&data[p+3]===50;for(let p=0;(p=data.indexOf(65,p))!==-1;){if(!hasArc(p))continue;const total=readU32(data,p+8),files=readU32(data,p+12);if(!files||files>4096||total<files*16||p+16+total>data.length)continue;const table=p+16;if(table+files*16>p+16+total)continue;for(let i=0;i<files;i++){const e=table+i*16,off=readU32(data,e+4),comp=readU32(data,e+8),raw=readU32(data,e+12);if(off<16+files*16||!comp||off+Math.max(comp,raw)>16+total||p+off+Math.max(comp,raw)>data.length)continue;const absolute=p+off,len=raw||comp,key=absolute+':'+len;if(seen.has(key))continue;const candidate=validateSpritePackage(data,absolute,len,p,i);if(candidate){seen.add(key);packages.push(candidate)}}}const known=new Set(packages.map(p=>p.offset)),ranges=[];for(let p=0;(p=data.indexOf(65,p))!==-1;){if(hasArc(p)){const total=readU32(data,p+8);if(total>0&&total<0x1000000&&p+16+total<=data.length)ranges.push([p,p+16+total])}}let deepFound=0;for(let off=0;off+32<data.length;off+=4){if(known.has(off)||ranges.some(r=>off>=r[0]&&off<r[1]))continue;const first=readU32(data,off);if(first<8||first%4||first>0x4000||off+first+24>data.length)continue;const count=first/4;if(count<2||count>4096)continue;let prev=first,ok=true;for(let i=0;i<count;i++){const n=readU32(data,off+i*4);if(n<first||n<prev||off+n+24>data.length){ok=false;break}prev=n}if(!ok)continue;const h=parseSpriteHeader(data,off+readU32(data,off),data.length);if(!h||h.length<24||h.length>0x200000)continue;let valid=0;for(let i=0;i<Math.min(count,8);i++){const n=readU32(data,off+i*4),hh=parseSpriteHeader(data,off+n,data.length);if(hh&&hh.length>=24&&hh.length<=0x200000&&off+n+hh.length<=data.length)valid++}if(valid<Math.min(count,2))continue;const candidate=validateSpritePackage(data,off,Math.min(data.length-off,0x800000),-1,-1);if(candidate){candidate.discovery='deep scan';known.add(off);packages.push(candidate);deepFound++}}packages.forEach(p=>{const h=p.firstHeader,w=h.width*h.imageWidth,ht=h.height*h.imageHeight,frames=Math.floor(h.count/Math.max(1,h.imageWidth*h.imageHeight));p.category=(w>=96&&ht>=64)?'backgrounds':(w<=32&&ht<=32&&frames<=4)?'icons':(frames>=4&&(w>=24||ht>=24))?'characters':(w<=48&&ht<=48)?'ui':frames>=2?'effects':'other';p.discovery=p.discovery||'archive'});packages.sort((a,b)=>a.offset-b.offset);paradiseExtract.packages=packages;buildParadiseAssetIndex();return{packages:packages.length,assets:paradiseExtract.assets.length,deepFound}}
+async function scanParadiseSpritePackages(onProgress=()=>{}){
+ const data=Hackabitat.firmware?.bytes;if(!data)throw Error('Load firmware first');
+ const packages=[],seen=new Set(),hasArc=p=>p+16<=data.length&&data[p]===65&&data[p+1]===82&&data[p+2]===67&&data[p+3]===50;
+ // Import of Paradise Advance's ARC2 package-table detection.
+ for(let p=0;(p=data.indexOf(65,p))!==-1;){
+  if(!hasArc(p))continue;
+  const total=readU32(data,p+8),files=readU32(data,p+12);
+  if(!files||files>4096||total<files*16||p+16+total>data.length)continue;
+  const table=p+16;if(table+files*16>p+16+total)continue;
+  for(let i=0;i<files;i++){
+   const e=table+i*16,off=readU32(data,e+4),comp=readU32(data,e+8),raw=readU32(data,e+12);
+   if(off<16+files*16||!comp||off+Math.max(comp,raw)>16+total||p+off+Math.max(comp,raw)>data.length)continue;
+   const absolute=p+off,len=raw||comp,key=absolute+':'+len;
+   if(seen.has(key))continue;
+   const candidate=validateSpritePackage(data,absolute,len,p,i);
+   if(candidate){seen.add(key);packages.push(candidate)}
+  }
+ }
+ // Build sorted archive ranges once. The old ranges.some() ran for every 4-byte
+ // offset and caused quadratic work on large firmware files.
+ const ranges=[];
+ for(let p=0;(p=data.indexOf(65,p))!==-1;){
+  if(!hasArc(p))continue;
+  const total=readU32(data,p+8);
+  if(total>0&&total<0x1000000&&p+16+total<=data.length)ranges.push([p,p+16+total]);
+ }
+ ranges.sort((a,b)=>a[0]-b[0]);
+ const known=new Set(packages.map(p=>p.offset));let ri=0,deepFound=0;
+ const limit=data.length-32,batch=0x10000;
+ for(let from=0;from<=limit;from+=batch){
+  const to=Math.min(limit+1,from+batch);
+  for(let off=from;off<to;off+=4){
+   while(ri<ranges.length&&ranges[ri][1]<=off)ri++;
+   if(known.has(off)||(ri<ranges.length&&off>=ranges[ri][0]&&off<ranges[ri][1]))continue;
+   const first=readU32(data,off);
+   if(first<8||first%4||first>0x4000||off+first+24>data.length)continue;
+   const count=first/4;if(count<2||count>4096)continue;
+   let prev=first,ok=true;
+   for(let i=0;i<count;i++){const n=readU32(data,off+i*4);if(n<first||n<prev||off+n+24>data.length){ok=false;break}prev=n}
+   if(!ok)continue;
+   const h=parseSpriteHeader(data,off+readU32(data,off),data.length);
+   if(!h||h.length<24||h.length>0x200000||off+readU32(data,off)+h.length>data.length)continue;
+   let valid=0;
+   for(let i=0;i<Math.min(count,8);i++){const n=readU32(data,off+i*4),hh=parseSpriteHeader(data,off+n,data.length);if(hh&&hh.length>=24&&hh.length<=0x200000&&off+n+hh.length<=data.length)valid++}
+   if(valid<Math.min(count,2))continue;
+   const candidate=validateSpritePackage(data,off,Math.min(data.length-off,0x800000),-1,-1);
+   if(candidate){candidate.discovery='deep scan';known.add(off);packages.push(candidate);deepFound++}
+  }
+  onProgress(Math.min(100,Math.round(to/Math.max(1,limit+1)*100)));
+  await new Promise(resolve=>setTimeout(resolve,0));
+ }
+ packages.forEach(p=>{const h=p.firstHeader,w=h.width*h.imageWidth,ht=h.height*h.imageHeight,frames=Math.floor(h.count/Math.max(1,h.imageWidth*h.imageHeight));p.category=(w>=96&&ht>=64)?'backgrounds':(w<=32&&ht<=32&&frames<=4)?'icons':(frames>=4&&(w>=24||ht>=24))?'characters':(w<=48&&ht<=48)?'ui':frames>=2?'effects':'other';p.discovery=p.discovery||'archive'});
+ packages.sort((a,b)=>a.offset-b.offset);paradiseExtract.packages=packages;buildParadiseAssetIndex();
+ return{packages:packages.length,assets:paradiseExtract.assets.length,deepFound};
+}
