@@ -7,3 +7,5 @@
 .delete-sprite{color:var(--danger);border-color:#633b43}.delete-sprite:hover{border-color:var(--danger)}
 
 .modal[hidden]{display:none!important}.modal{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px;background:rgba(0,0,0,.72)}.modal-card{width:min(520px,100%);padding:24px;border:1px solid var(--line,#34363d);border-radius:16px;background:var(--panel,#17191f);box-shadow:0 24px 80px rgba(0,0,0,.45)}.modal-card h2{margin-top:0}.modal-card label{display:block;margin:14px 0 6px}.modal-card select{width:100%;margin-bottom:18px;padding:12px;background:#101114;color:inherit;border:1px solid #444;border-radius:8px}.modal-card .row{gap:10px}
+
+.gallery-auth{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px}.gallery-auth .row{max-width:100%}.gallery-auth input[type=email]{min-width:190px}.gallery-auth [hidden]{display:none!important}@media(max-width:680px){.gallery-auth{align-items:flex-start;flex-direction:column}.gallery-auth .row{width:100%}.gallery-auth .button{flex:1}}
